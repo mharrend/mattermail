@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -42,31 +41,6 @@ Options:
     -v, --version Print current version
 `
 
-func loadconfig() []*mmail.Config {
-	log.Println("Loading ", configFile)
-
-	file, err := ioutil.ReadFile(configFile)
-	if err != nil {
-		log.Fatal("Could not load: ", err)
-	}
-
-	var cfg []*mmail.Config
-	err = json.Unmarshal(file, &cfg)
-
-	if err != nil {
-		log.Fatal("Could not parse: ", err)
-	}
-
-	// Set default value
-	for _, c := range cfg {
-		if err := c.Valid(); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	return cfg
-}
-
 func main() {
 
 	flag.Parse()
@@ -82,7 +56,18 @@ func main() {
 		return
 	}
 
-	cfgs := loadconfig()
+	log.Println("Loading ", configFile)
+
+	file, err := ioutil.ReadFile(configFile)
+	if err != nil {
+		log.Fatalf("Could not load: %v\n%v", configFile, err.Error())
+	}
+
+	cfgs, err := mmail.ParseConfigList(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	hasconfig := false
 	log.Println("MatterMail version:", Version)
 

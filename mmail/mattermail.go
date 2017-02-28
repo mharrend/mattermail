@@ -2,24 +2,23 @@ package mmail
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"mime/multipart"
-	"mime/quotedprintable"
+	"mime"
 	"net/mail"
 	"os"
 	"regexp"
 	"strings"
 	"time"
-	"crypto/tls"
+	"unicode/utf8"
 
 	"github.com/jhillyerd/go.enmime"
 	"github.com/mattermost/platform/model"
 	"github.com/mxk/go-imap/imap"
 	"github.com/paulrosania/go-charset/charset"
-	_ "github.com/paulrosania/go-charset/data"
+	_ "github.com/paulrosania/go-charset/data" //initiate go-charset data
 )
 
 // MatterMail struct with configurations, loggers and Mattemost user
@@ -225,11 +224,11 @@ func (m *MatterMail) IdleMailBox() error {
 }
 
 // postMessage Create a post in Mattermost
-func (m *MatterMail) postMessage(client *model.Client, channelID string, message string, filenames *[]string) error {
+func (m *MatterMail) postMessage(client *model.Client, channelID string, message string, fileIds []string) error {
 	post := &model.Post{ChannelId: channelID, Message: message}
 
-	if filenames != nil && len(*filenames) > 0 {
-		post.Filenames = *filenames
+	if len(fileIds) > 0 {
+		post.FileIds = fileIds
 	}
 
 	res, err := client.CreatePost(post)
@@ -273,7 +272,7 @@ func (m *MatterMail) PostFile(from, subject, message, emailname string, emailbod
 	}
 
 	if !teamMatch {
-		return fmt.Errorf("Did not find team with name %v", m.cfg.Team)
+		return fmt.Errorf("Did not find team with name '%v'. Check if the team exist or if you are not using display name instead team name", m.cfg.Team)
 	}
 
 	//Discover channel id by channel name
@@ -313,61 +312,43 @@ func (m *MatterMail) PostFile(from, subject, message, emailname string, emailbod
 
 	m.debg.Printf("Post email in %v", channelName)
 
-	if len(*attach) == 0 && len(emailname) == 0 {
+	if m.cfg.NoAttachment || (len(*attach) == 0 && len(emailname) == 0) {
 		return m.postMessage(client, channelID, message, nil)
 	}
 
-	buf := &bytes.Buffer{}
-	writer := multipart.NewWriter(buf)
-	var email []byte
+	var fileIds []string
 
-	addPart := func(filename string) error {
-		part, err := writer.CreateFormFile("files", filename)
-		if err != nil {
+	uploadFile := func(filename string, data []byte) error {
+		if len(data) == 0 {
+			return nil
+		}
+
+		resp, err := client.UploadPostAttachment(data, channelID, filename)
+		if resp == nil {
 			return err
 		}
 
-		if _, err = part.Write(email); err != nil {
-			return err
+		if len(resp.FileInfos) != 1 {
+			return fmt.Errorf("error on upload file - fileinfos len different of one %v", resp.FileInfos)
 		}
+
+		fileIds = append(fileIds, resp.FileInfos[0].Id)
 		return nil
 	}
 
 	if len(emailname) > 0 {
-		email = []byte(*emailbody)
-		if err := addPart(emailname); err != nil {
+		if err := uploadFile(emailname, []byte(*emailbody)); err != nil {
 			return err
 		}
 	}
 
 	for _, a := range *attach {
-		email = a.Content()
-		if err := addPart(a.FileName()); err != nil {
+		if err := uploadFile(a.FileName(), a.Content()); err != nil {
 			return err
 		}
 	}
 
-	field, err := writer.CreateFormField("channel_id")
-	if err != nil {
-		return err
-	}
-
-	_, err = field.Write([]byte(channelID))
-	if err != nil {
-		return err
-	}
-
-	err = writer.Close()
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.UploadPostAttachment(buf.Bytes(), writer.FormDataContentType())
-	if resp == nil {
-		return err
-	}
-
-	return m.postMessage(client, channelID, message, &resp.Data.(*model.FileUploadResponse).Filenames)
+	return m.postMessage(client, channelID, message, fileIds)
 }
 
 func (m *MatterMail) getChannelID(client *model.Client, channelList *model.ChannelList, channelName string) string {
@@ -380,7 +361,7 @@ func (m *MatterMail) getChannelID(client *model.Client, channelList *model.Chann
 }
 
 func getChannelIDByName(channelList *model.ChannelList, channelName string) string {
-	for _, c := range channelList.Channels {
+	for _, c := range *channelList {
 		if c.Name == channelName {
 			return c.Id
 		}
@@ -395,19 +376,24 @@ func (m *MatterMail) getDirectChannelIDByName(client *model.Client, channelList 
 		return ""
 	}
 
-	result, err := client.GetProfilesForDirectMessageList(client.GetTeamId())
+	//result, err := client.GetProfilesForDirectMessageList(client.GetTeamId())
+	result, err := client.SearchUsers(model.UserSearch{
+		AllowInactive: false,
+		TeamId:        client.GetTeamId(),
+		Term:          userName,
+	})
 
 	if err != nil {
-		m.eror.Println("Error on GetProfilesForDirectMessageList: ", err.Error())
+		m.eror.Println("Error on SearchUsers: ", err.Error())
 		return ""
 	}
 
-	profiles := result.Data.(map[string]*model.User)
+	profiles := result.Data.([]*model.User)
 	var userID string
 
-	for k, p := range profiles {
+	for _, p := range profiles {
 		if p.Username == userName {
-			userID = k
+			userID = p.Id
 			break
 		}
 	}
@@ -445,7 +431,7 @@ func getChannelFromSubject(subject string) string {
 	if len(ret) < 2 {
 		return ""
 	}
-	return strings.ToLower(ret[1])
+	return strings.ToLower(ret[len(ret)-1])
 }
 
 //Read number of lines of string
@@ -494,48 +480,19 @@ func replaceCID(html *string, part *enmime.MIMEPart) string {
 }
 
 // NonASCII Decode non ASCII header string RFC 1342
-// encoded-word = "=?" charset "?" encoding "?" encoded-text "?="
 func NonASCII(encoded string) string {
 
-	regexRFC1342, _ := regexp.Compile(`=\?[^\?]*\?.\?[^\?]*\?=`)
+	regexRFC1342, _ := regexp.Compile(`=\?.*?\?=`)
+	dec := new(mime.WordDecoder)
+	dec.CharsetReader = charset.NewReader
 
 	result := regexRFC1342.ReplaceAllStringFunc(encoded, func(encoded string) string {
-		//0 utf 1 B/Q 2 code
-		v := strings.Split(encoded, "?")[1:4]
-		var decoded string
-		switch strings.ToLower(v[1]) {
-		case "b": //Base64
-			data, err := base64.StdEncoding.DecodeString(v[2])
-			if err != nil {
-				log.Println("Error decode Base64", err)
-				return encoded
-			}
-
-			decoded = string(data)
-
-		case "q": //Quoted-Printable
-			data, err := ioutil.ReadAll(quotedprintable.NewReader(strings.NewReader(v[2])))
-			if err != nil {
-				log.Println("Error decode Quoted-Printable", err)
-				return encoded
-			}
-			decoded = string(data)
-
-		default:
-			log.Println("Unknow encoding " + v[1])
-			return encoded
-		}
-
-		//Decode charset
-		r, err := charset.NewReader(strings.ToLower(v[0]), strings.NewReader(decoded))
+		decoded, err := dec.Decode(encoded)
 		if err != nil {
-			log.Println("Error decode charset", err)
+			log.Println("Error decode NonASCII", encoded, err)
 			return encoded
 		}
-
-		result, _ := ioutil.ReadAll(r)
-
-		return string(result)
+		return decoded
 	})
 
 	return result
@@ -576,6 +533,12 @@ func (m *MatterMail) PostMail(msg *mail.Message) error {
 	subject := mime.GetHeader("Subject")
 	from := NonASCII(msg.Header.Get("From"))
 	message := fmt.Sprintf(m.cfg.MailTemplate, from, subject, partmessage)
+
+	// Mattermost post limit
+	if utf8.RuneCountInString(message) > 4000 {
+		message = string([]rune(message)[:3995]) + " ..."
+		m.info.Println("Email has been cut because is larger than 4000 characters")
+	}
 
 	return m.PostFile(from, subject, message, emailname, &emailbody, &mime.Attachments)
 }
