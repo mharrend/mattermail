@@ -6,7 +6,10 @@
 	govet \
 	golint \
 	gofmt \
-	lint
+	format \
+	lint \
+	test \
+	cover
 
 export GO15VENDOREXPERIMENT=1
 
@@ -39,21 +42,37 @@ package:
 
 govet:
 	@echo GOVET
-	$(shell go vet ./*.go)
+	$(eval PKGS := $(shell go list ./... | grep -v /vendor/))
+	@$(GO) vet $(PKGS)
 
 golint:
 	@echo GOLINT
-	@golint ./*.go
+	$(eval PKGS := $(shell go list ./... | grep -v /vendor/))
+	@for pkg in $(PKGS) ; do \
+		golint -set_exit_status $$pkg; \
+	done
 
 gofmt:
 	@echo GOFMT
-	$(eval GOFMT_OUTPUT := $(shell gofmt -d -s *.go 2>&1))
-	@echo "$(GOFMT_OUTPUT)"
-	@if [ ! "$(GOFMT_OUTPUT)" ]; then \
-		echo "gofmt sucess"; \
-	else \
-		echo "gofmt failure"; \
-		exit 1; \
-	fi
+	@mkdir -p $(DIST)
+	@find ./ -type f -name "*.go" -not -path "./vendor/*" -exec gofmt -s -d {} \; | tee $(DIST)/format.diff
+	@test ! -s $(DIST)/format.diff || { echo "ERROR: the source code has not been formatted - please use 'make format' or 'gofmt'"; exit 1; }
+
+format:
+	@find ./ -type f -name "*.go" -not -path "./vendor/*" -exec gofmt -w {} \;
 
 lint: govet golint gofmt
+
+test:
+	@echo Running tests
+	$(eval PKGS := $(shell go list ./... | grep -v /vendor/))
+	$(eval PKGS_DELIM := $(shell echo $(PKGS) | sed -e 's/ /,/g'))
+	$(GO) list -f '{{if or (len .TestGoFiles) (len .XTestGoFiles)}}$(GO) test -run=$(TESTS) -test.v -test.timeout=120s -covermode=count -coverprofile={{.Name}}_{{len .Imports}}_{{len .Deps}}.coverprofile -coverpkg $(PKGS_DELIM) {{.ImportPath}}{{end}}' $(PKGS) | xargs -I {} bash -c {}
+	gocovmerge `ls *.coverprofile` > cover.out
+	rm *.coverprofile
+
+cover:
+	@echo Opening coverage info on browser. If this failed run make test first
+
+	$(GO) tool cover -html=cover.out
+	$(GO) tool cover -func=cover.out

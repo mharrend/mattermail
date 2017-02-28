@@ -2,6 +2,9 @@
 
 *MatterMail* is an integration service for [Mattermost](http://www.mattermost.org/), *MatterMail* listen an email box and publish all received emails in a channel or private group in Mattermost.
 
+[![Build Status](https://travis-ci.org/rodrigocorsi2/mattermail.svg?branch=master)](https://travis-ci.org/rodrigocorsi2/mattermail)
+[![Coverage Status](https://coveralls.io/repos/github/rodrigocorsi2/mattermail/badge.svg?branch=master)](https://coveralls.io/github/rodrigocorsi2/mattermail?branch=master)
+
 ![mattermail screenshot](https://github.com/rodrigocorsi2/mattermail/raw/master/img/screenshot.png)
 
 ## Redirect to the channel by subject (Version 3.0 or later)
@@ -16,13 +19,9 @@ Mattermail post the email using this rules (if "`NoRedirectChannel:false`"):
 
 
 ## Install
-  * For Mattermost 3.0:
-  
-  [Linux](https://github.com/rodrigocorsi2/mattermail/releases/download/v3.0/mattermail-3.0.linux.am64.tar.gz) / [OSX](https://github.com/rodrigocorsi2/mattermail/releases/download/v3.0/mattermail-3.0.osx.am64.tar.gz)
+  * For Mattermost 3.0 or later: [Latest Version](https://github.com/rodrigocorsi2/mattermail/releases/latest)
 
-  * For Mattermost 2.2:
-  
-  [Linux](https://github.com/rodrigocorsi2/mattermail/releases/download/v2.2/mattermail-2.2.linux.am64.tar.gz)
+  * For Mattermost 2.2: [Version 2.2](https://github.com/rodrigocorsi2/mattermail/releases/tag/v2.2)
 
 ## Usage
 1. You need to create a user in Mattermost server, you can use MatterMail icon as profile picture.
@@ -30,7 +29,7 @@ Mattermail post the email using this rules (if "`NoRedirectChannel:false`"):
 2. Get the *Channel Handle* of the channel and check if the user has permission to post in this channel
 ![mattermail channel_handle](https://github.com/rodrigocorsi2/mattermail/raw/master/img/channel_handle.png)
 
-3. Edit the file conf.json, e.g.:
+3. Edit the file config.json, e.g.:
 
 ```javascript
 [
@@ -58,10 +57,12 @@ Mattermail post the email using this rules (if "`NoRedirectChannel:false`"):
 		"EmailPass":         "password",
 		"MailTemplate":      ":incoming_envelope: _From: **%v**_\n>_%v_\n\n%v",
 		"StartTLS":          false,  /*Optional default false*/
+		"TLSAcceptAllCerts": false,  /*Optional default false*/
 		"Disabled":          false,  /*Optional default false*/
 		"Debug":             true    /*Optional default false*/
         "LinesToPreview":    20,     /*Optional default 10*/
 		"NoRedirectChannel": true,   /*Optional default false*/
+        "NoAttachment":      true,   /*Optional leave out attachments*/
 
         /*Filter works only (Version 3.0 or later)*/
         "Filter":            [
