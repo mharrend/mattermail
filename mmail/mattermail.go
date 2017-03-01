@@ -112,7 +112,7 @@ func (m *MatterMail) CheckNewMails() error {
 	)
 
 	// Open a mailbox (synchronous command - no need for imap.Wait)
-	m.imapClient.Select("INBOX", false)
+	m.imapClient.Select("mattermost", false)
 
 	var specs []imap.Field
 	specs = append(specs, "UNSEEN")
@@ -204,7 +204,7 @@ func (m *MatterMail) IdleMailBox() error {
 	}
 
 	// Open a mailbox (synchronous command - no need for imap.Wait)
-	m.imapClient.Select("INBOX", false)
+	m.imapClient.Select("mattermost", false)
 
 	_, err := m.imapClient.Idle()
 	if err != nil {
